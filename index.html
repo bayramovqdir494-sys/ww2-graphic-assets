@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>II Dünya müharibəsi modelləri</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #2a2a2e; color: #eee; font-family: system-ui, sans-serif; overflow: hidden; }
+    canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    #ui {
+      position: absolute; top: 0; left: 0; right: 0;
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+      padding: 10px 12px; background: linear-gradient(to bottom, rgba(0,0,0,.55), transparent);
+      pointer-events: none;
+    }
+    #ui > * { pointer-events: auto; }
+    h1 { margin: 0; font-size: 16px; font-weight: 600; }
+    select, button {
+      font-size: 15px; padding: 8px 12px; border-radius: 8px; border: 0;
+      background: #444; color: #fff;
+    }
+    select { min-width: 180px; max-width: 70vw; }
+    button { cursor: pointer; }
+    button.active { background: #c4a35a; color: #111; }
+    #hint { position: absolute; bottom: 12px; left: 12px; right: 12px; text-align: center; font-size: 13px; color: #bbb; pointer-events: none; }
+    #status { margin-left: auto; font-size: 13px; color: #ccc; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <h1 id="title">3D baxış</h1>
+    <select id="picker" aria-label="Model"></select>
+    <button id="idleBtn" hidden>Idle</button>
+    <button id="walkBtn" hidden>Walk</button>
+    <span id="status"></span>
+  </div>
+  <div id="hint">Barmağınızla və ya siçanla çevirin · iki barmaq və ya scroll ilə yaxınlaşdırın</div>
+  <script>window.VIEWER_CONFIG = {
+  title: "II Dünya müharibəsi modelləri",
+  models: [
+    {file:"soldier.glb", label:"Əsgər"},
+    {file:"special_forces.glb", label:"Xüsusi qüvvələr"},
+    {file:"landing_craft.glb", label:"Desant qayığı"},
+    {file:"tank_sherman.glb", label:"Sherman tankı"},
+    {file:"tank_tiger.glb", label:"Tiger tankı"},
+    {file:"artillery.glb", label:"Top"},
+    {file:"sniper_rifle.glb", label:"Snayper"},
+    {file:"machine_gun.glb", label:"Pulemyot"},
+    {file:"grenade_launcher.glb", label:"Bazuka"},
+    {file:"rifle.glb", label:"Tüfəng"}
+  ]
+};</script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.1/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.1/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    const CONFIG = window.VIEWER_CONFIG;
+    document.title = CONFIG.title;
+    document.getElementById('title').textContent = CONFIG.title;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x3a3a40);
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 200);
+    camera.position.set(1.6, 1.2, 2.4);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.target.set(0, 0.8, 0);
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 1.1));
+    const key = new THREE.DirectionalLight(0xffffff, 1.15);
+    key.position.set(4, 8, 6);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xaaccff, 0.35);
+    fill.position.set(-5, 2, -3);
+    scene.add(fill);
+
+    const loader = new GLTFLoader();
+    let currentRoot = null;
+    let mixer = null;
+    let actions = {};
+    const clock = new THREE.Clock();
+    const status = document.getElementById('status');
+    const picker = document.getElementById('picker');
+    const idleBtn = document.getElementById('idleBtn');
+    const walkBtn = document.getElementById('walkBtn');
+
+    CONFIG.models.forEach((m, i) => {
+      const opt = document.createElement('option');
+      opt.value = m.file;
+      opt.textContent = m.label;
+      if (i === 0) opt.selected = true;
+      picker.appendChild(opt);
+    });
+
+    function fitCamera(object) {
+      const box = new THREE.Box3().setFromObject(object);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z, 0.2);
+      const dist = maxDim / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) * 1.55;
+      controls.target.copy(center);
+      camera.near = Math.max(dist / 100, 0.02);
+      camera.far = dist * 50;
+      camera.updateProjectionMatrix();
+      camera.position.set(center.x + dist * 0.55, center.y + dist * 0.35, center.z + dist * 0.85);
+      controls.update();
+    }
+
+    function play(name) {
+      Object.values(actions).forEach(a => a.fadeOut(0.2));
+      if (actions[name]) {
+        actions[name].reset().fadeIn(0.2).play();
+        idleBtn.classList.toggle('active', name === 'Idle');
+        walkBtn.classList.toggle('active', name === 'Walk');
+      }
+    }
+
+    function load(file) {
+      status.textContent = 'Yüklənir…';
+      if (currentRoot) {
+        scene.remove(currentRoot);
+        currentRoot.traverse(o => {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) {
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            mats.forEach(m => { if (m.map) m.map.dispose(); m.dispose(); });
+          }
+        });
+      }
+      mixer = null;
+      actions = {};
+      idleBtn.hidden = true;
+      walkBtn.hidden = true;
+      loader.load(
+        'models/' + file,
+        (gltf) => {
+          currentRoot = gltf.scene;
+          scene.add(currentRoot);
+          if (gltf.animations && gltf.animations.length) {
+            mixer = new THREE.AnimationMixer(currentRoot);
+            gltf.animations.forEach(clip => { actions[clip.name] = mixer.clipAction(clip); });
+            const hasIdle = !!actions.Idle;
+            const hasWalk = !!actions.Walk;
+            idleBtn.hidden = !hasIdle;
+            walkBtn.hidden = !hasWalk;
+            play(hasIdle ? 'Idle' : gltf.animations[0].name);
+          }
+          fitCamera(currentRoot);
+          status.textContent = '';
+        },
+        undefined,
+        () => { status.textContent = 'Yüklənmədi'; }
+      );
+    }
+
+    picker.addEventListener('change', () => load(picker.value));
+    idleBtn.addEventListener('click', () => play('Idle'));
+    walkBtn.addEventListener('click', () => play('Walk'));
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    function tick() {
+      requestAnimationFrame(tick);
+      const dt = clock.getDelta();
+      if (mixer) mixer.update(dt);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    tick();
+    load(picker.value);
+  </script>
+</body>
+</html>
